@@ -48,6 +48,36 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Cell formatting from the engine. Explicit-alignment rules come after
+   .calcite-num so they win when both classes are present. */
+.calcite-table td.calcite-bold {
+  font-weight: var(--font-bold);
+}
+
+.calcite-table td.calcite-italic {
+  font-style: italic;
+}
+
+.calcite-table td.calcite-underline {
+  text-decoration: underline;
+}
+
+.calcite-table td.calcite-strike {
+  text-decoration: line-through;
+}
+
+.calcite-table td.calcite-ha-l {
+  text-align: left;
+}
+
+.calcite-table td.calcite-ha-c {
+  text-align: center;
+}
+
+.calcite-table td.calcite-ha-r {
+  text-align: right;
+}
+
 .calcite-bar {
   display: flex;
   justify-content: space-between;

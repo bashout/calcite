@@ -26,6 +26,9 @@ Commands:
   load    {"path": str}                 -> {"docId": int, "sheets": [str]}
   dump    {"docId": int, "sheet": str,  -> {"sheet": str, "range": {...}, "rows": [[cell,...]]}
            "maxRows"?: int, "maxCols"?: int}
+  cell = {"v": raw, "s": raw-as-string, "d": display string (number format
+          applied), "f"?: formula, "err"?: int, "fmt"?: {"b","i","u","strike",
+          "color"?, "bg"?, "ha"?: "l"|"c"|"r"}}
   setCell {"docId": int, "sheet": str,  -> {}
            "col": int, "row": int, "text": str}
   insertRows  {"docId", "sheet", "row", "count"}    -> {"sheets": [str]}
@@ -58,8 +61,70 @@ if hasattr(sys.stdin, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 import uno  # noqa: E402
+from com.sun.star.awt.FontStrikeout import NONE as STRIKEOUT_NONE  # noqa: E402
+from com.sun.star.awt.FontUnderline import NONE as UNDERLINE_NONE  # noqa: E402
+from com.sun.star.awt.FontWeight import BOLD  # noqa: E402
 from com.sun.star.beans import PropertyValue  # noqa: E402
 from com.sun.star.sheet.CellInsertMode import DOWN, RIGHT  # noqa: E402
+from com.sun.star.table.CellHoriJustify import CENTER, LEFT, RIGHT as H_RIGHT  # noqa: E402
+
+
+def _argb_to_hex(v):
+    """UNO color int (0xRRGGBB, -1 = automatic) -> '#rrggbb' or None."""
+    if v is None or int(v) < 0:
+        return None
+    return "#{:06x}".format(int(v) & 0xFFFFFF)
+
+
+def _cell_fmt(cobj):
+    """Compact formatting record for one cell; {} when everything is default.
+
+    Read with individual getPropertyValue calls (the lowest common
+    denominator across builds). NOTE: this is per-cell UNO traffic on every
+    dump — if large grids ever get slow, a `formats: false` dump option that
+    skips this would be the perf guard.
+    """
+    def p(name):
+        try:
+            return cobj.getPropertyValue(name)
+        except Exception:
+            return None
+
+    def enum_val(x):
+        # pyuno enums expose .value; for some enum types (e.g. FontSlant) it is
+        # the member NAME string, for others the int — int() does not work.
+        return x.value if hasattr(x, "value") else x
+
+    fmt = {}
+    w = p("CharWeight")
+    if w is not None and float(w) >= float(BOLD):
+        fmt["b"] = True
+    # CharPosture is a com.sun.star.awt.FontSlant enum; default member NONE.
+    posture = enum_val(p("CharPosture"))
+    if posture is not None and posture not in (0, "NONE", "UPRIGHT"):
+        fmt["i"] = True
+    uline = enum_val(p("CharUnderline"))
+    if uline is not None and uline != enum_val(UNDERLINE_NONE):
+        fmt["u"] = True
+    strike = enum_val(p("CharStrikeout"))
+    if strike is not None and strike != enum_val(STRIKEOUT_NONE):
+        fmt["strike"] = True
+    color = _argb_to_hex(p("CharColor"))
+    if color:
+        fmt["color"] = color
+    bg = _argb_to_hex(p("CellBackColor"))
+    if bg:
+        fmt["bg"] = bg
+    # Calc cells expose HoriJustify (not HorJustify).
+    ha = p("HoriJustify")
+    if ha == LEFT:
+        fmt["ha"] = "l"
+    elif ha == CENTER:
+        fmt["ha"] = "c"
+    elif ha == H_RIGHT:
+        fmt["ha"] = "r"
+    # STANDARD / REPEAT -> no entry: the renderer's default alignment applies.
+    return fmt
 
 
 def _prop(name, value):
@@ -199,26 +264,32 @@ class Bridge:
         )
         values = rng.getDataArray()      # computed values
         formulas = rng.getFormulaArray()  # formulas ("=..." where present)
+        try:
+            displays = rng.getStringArray()  # number-format-aware display strings
+        except Exception:
+            displays = None
         rows = []
         for r, (vrow, frow) in enumerate(zip(values, formulas)):
             row = []
             for c, (v, f) in enumerate(zip(vrow, frow)):
                 is_formula = isinstance(f, str) and f.startswith("=")
+                cobj = rng.getCellByPosition(c, r)
+                d = displays[r][c] if displays is not None else cobj.getString()
                 # getDataArray returns None for string-valued formula results;
-                # fetch those individually via getString().
+                # the display string is the only content there.
                 if is_formula and v is None:
-                    cobj = rng.getCellByPosition(c, r)
-                    s = cobj.getString()
-                    cell_out = {"v": None, "s": s, "f": f}
+                    cell_out = {"v": None, "s": d, "d": d, "f": f}
                     err = cobj.getError()
                     if err:
                         cell_out["err"] = err
-                    row.append(cell_out)
                 else:
-                    cell = {"v": v, "s": str(v) if v is not None else ""}
+                    cell_out = {"v": v, "s": str(v) if v is not None else "", "d": d}
                     if is_formula:
-                        cell["f"] = f
-                    row.append(cell)
+                        cell_out["f"] = f
+                fmt = _cell_fmt(cobj)
+                if fmt:
+                    cell_out["fmt"] = fmt
+                row.append(cell_out)
             rows.append(row)
         return {
             "sheet": params["sheet"],

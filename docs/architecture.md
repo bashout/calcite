@@ -101,6 +101,13 @@ renderer (Chromium)                main process (Node)              engine
   by one on edge inserts so blank inserted rows/columns stay visible even on
   empty sheets.
 - Grids are capped at 500 rows × 100 columns per dump.
+- Each dumped cell carries a `fmt` record (bold/italic/underline/strikeout,
+  font/background color, explicit horizontal alignment) read per cell from UNO
+  properties, plus `d` — the number-format-aware display string — while `s`
+  stays the raw value. Formatting is render-only; editing formats happens in
+  full LibreOffice. Perf note: the per-cell property reads are UNO traffic on
+  every dump; if large grids ever get slow, a `formats: false` dump option that
+  skips `fmt` would be the guard to add.
 - While the engine is reconnecting/respawning, editing is locked and the embed
   shows an "engine reconnecting…" state; a **Reload** button re-reads the file
   from disk.

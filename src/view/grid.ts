@@ -128,13 +128,23 @@ export function renderGrid(container: HTMLElement, grid: GridData, opts: GridOpt
       menu.showAtMouseEvent(e);
     };
     row.forEach((cell, c) => {
-      const td = tr.createEl("td", { text: cell.s });
+      const td = tr.createEl("td", { text: cell.d ?? cell.s });
       if (cell.f) td.setAttr("title", cell.f);
       if (cell.err) {
         td.addClass("calcite-cell-error");
         td.setAttr("title", `${cell.f ?? cell.s} (error ${cell.err})`);
       }
       if (typeof cell.v === "number") td.addClass("calcite-num");
+      if (cell.fmt) {
+        if (cell.fmt.b) td.addClass("calcite-bold");
+        if (cell.fmt.i) td.addClass("calcite-italic");
+        if (cell.fmt.u) td.addClass("calcite-underline");
+        if (cell.fmt.strike) td.addClass("calcite-strike");
+        // Explicit alignment only; without it calcite-num/defaults apply.
+        if (cell.fmt.ha) td.addClass(`calcite-ha-${cell.fmt.ha}`);
+        if (cell.fmt.color) td.style.color = cell.fmt.color;
+        if (cell.fmt.bg) td.style.backgroundColor = cell.fmt.bg;
+      }
       td.addClass("calcite-cell");
       const ref = { col: startCol + c, row: startRow + r };
       td.setAttr("data-col", String(ref.col));

@@ -183,8 +183,11 @@ Known limitations:
 - Formula entry uses the document locale's argument separator (`;` under
   `en_GB`, `,` under `en-US`).
 - Grids are capped at 500 rows × 100 columns per dump.
-- No undo/redo, no multi-cell ranges, no formatting — the embed is a data
-  grid, not a full Calc UI.
+- No undo/redo, no multi-cell ranges — the embed is a data grid, not a full
+  Calc UI. Cell **formatting is rendered read-only** (bold/italic/underline/
+  strikeout, font/background color, alignment, number-format display strings);
+  editing formats happens in the full LibreOffice app. No column widths, row
+  heights, borders, or merged-cell rendering yet.
 
 ## License
 

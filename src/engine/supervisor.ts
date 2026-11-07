@@ -9,11 +9,29 @@ import bridgePySource from "../../bridge/bridge.py";
 import { locatePythonUno, locateSoffice } from "./locator";
 import { EngineInfo, engineFile, pidAlive, pruneWindows, readEngineInfo, removeEngineInfo, stateDir, writeEngineInfo } from "./registry";
 
+/** Compact per-cell formatting (from the engine's UNO cell properties). */
+export interface CellFormat {
+  b?: boolean;
+  i?: boolean;
+  u?: boolean;
+  strike?: boolean;
+  /** '#rrggbb' font color */
+  color?: string;
+  /** '#rrggbb' background */
+  bg?: string;
+  /** Explicit horizontal alignment: "l" | "c" | "r" (absent = default) */
+  ha?: "l" | "c" | "r";
+}
+
 export interface CellData {
   v: string | number | boolean | null;
+  /** raw value as string */
   s: string;
+  /** display string with the number format applied (what Calc shows) */
+  d?: string;
   f?: string;
   err?: number;
+  fmt?: CellFormat;
 }
 
 export interface GridData {
@@ -59,7 +77,7 @@ const HEARTBEAT_MS = 5000;
 const PING_TIMEOUT_MS = 5000;
 const ENGINE_POLL_MS = 4000;
 /** Bump when bridge.py's command set changes; stale engines are respawned. */
-const BRIDGE_VERSION = "9-macos-intree-a1";
+const BRIDGE_VERSION = "10-fmt-a1";
 
 /** Convert an absolute OS path to a file:// URL (Windows needs file:///C:/...). */
 function pathToFileUrl(p: string): string {

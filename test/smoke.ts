@@ -130,6 +130,36 @@ async function main() {
   }
   if (!tokenEnforced) throw new Error("UNO socket accepted a tokenless connection");
 
+  // cell formatting: set bold + red background on A1 from a second UNO client,
+  // then the dump must carry the fmt record and the display string "d"
+  const fmtScript = `
+import uno
+from com.sun.star.awt import FontWeight
+cs = ${JSON.stringify(cs)}
+l = uno.getComponentContext()
+r = l.ServiceManager.createInstanceWithContext("com.sun.star.bridge.UnoUrlResolver", l)
+ctx = r.resolve("uno:" + cs)
+desktop = ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+doc = None
+enum = desktop.getComponents().createEnumeration()
+while enum.hasMoreElements():
+    comp = enum.nextElement()
+    if comp.supportsService("com.sun.star.sheet.SpreadsheetDocument"):
+        doc = comp
+        break
+cell = doc.Sheets.getByName("sample").getCellByPosition(0, 0)
+cell.CharWeight = FontWeight.BOLD
+cell.CellBackColor = 0xFF0000
+`;
+  execFileSync("python3", ["-c", fmtScript], { timeout: 20000, stdio: "pipe" });
+  const fmtGrid = await sup.dumpSheet(loaded.docId, "sample");
+  const a1 = fmtGrid.rows[0][0];
+  console.log("A1 with fmt:", JSON.stringify(a1));
+  if (a1.d !== "name") throw new Error(`display string wrong: ${JSON.stringify(a1)}`);
+  if (!a1.fmt || a1.fmt.b !== true || a1.fmt.bg !== "#ff0000") throw new Error(`fmt not delivered: ${JSON.stringify(a1)}`);
+  if (fmtGrid.rows[1][0].fmt) throw new Error(`fmt leaked onto unformatted cell: ${JSON.stringify(fmtGrid.rows[1][0])}`);
+  console.log("FORMAT PASS");
+
   // multiplex: second doc in same engine
   const loaded2 = await sup.loadFile(ods);
   const grid2 = await sup.dumpSheet(loaded2.docId, loaded2.sheets[0]);
