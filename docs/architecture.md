@@ -65,6 +65,20 @@ renderer (Chromium)                main process (Node)              engine
 10. Failure: respawn with backoff, status banner in embed; dead engines are
     detected via heartbeat and killed/respawned instead of hanging; after a
     respawn all open docs are reloaded automatically.
+11. macOS process model: on macOS the bridge never runs as a direct child of
+    Node. TDF's signed builds (LO 25.2+) embed parent-launch constraints in
+    the macOS signature, and macOS 26+ SIGKILLs any spawn of the bundled
+    `LibreOfficePython.framework` interpreter that is not inside the
+    LibreOffice process tree. So on macOS the supervisor copies `bridge.py`
+    into the engine profile's `user/scripts/python/` and starts it via
+    `soffice ... "vnd.sun.star.script:calcite_bridge.py$main?language=Python&location=user"`;
+    the in-tree bridge uses the in-process UNO context (no `CALCITE_UNO_CONNECT`)
+    and serves the same token-authenticated localhost socket. On Linux/Windows
+    the bridge remains a directly spawned python process (`python3-uno` /
+    bundled `python.exe`). Locator: LO 25.x macOS bundles keep the interpreter
+    at `Contents/Frameworks/LibreOfficePython.framework/Versions/<ver>/bin/python3.x`
+    (`Contents/MacOS/python` is gone) and `uno.py` in `Contents/Resources`, so
+    the framework interpreter is probed with `PYTHONPATH=<bundle>/Contents/Resources`.
 
 ## Render pipeline notes
 

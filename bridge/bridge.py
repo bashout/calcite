@@ -9,6 +9,12 @@ Protocol (one JSON object per line):
 
 Connection string is passed via CALCITE_UNO_CONNECT, e.g.
   socket,host=127.0.0.1,port=2083;urp;StarOffice.ComponentContext
+When CALCITE_UNO_CONNECT is absent the script runs IN-TREE: inside the soffice
+process itself (macOS starts it as a user script, because macOS 26+ launch
+constraints SIGKILL direct spawns of the bundled interpreter). It then uses
+the in-process component context instead of a UNO socket. In both modes the
+RPC transport toward the supervisor is the token-authenticated localhost
+socket (CALCITE_BRIDGE_LISTEN) or, for a single direct-spawn client, stdio.
 
 Commands:
   ping                                  -> {"version": str}
@@ -86,6 +92,18 @@ class Bridge:
                 time.sleep(delay)
         if self.ctx is None:
             raise RuntimeError(f"could not connect to soffice: {last_err}")
+        smgr = self.ctx.ServiceManager
+        self.desktop = smgr.createInstanceWithContext(
+            "com.sun.star.frame.Desktop", self.ctx
+        )
+
+    def connect_local(self):
+        """In-tree mode (macOS): this script runs inside the soffice process
+        (started as a user script via the scripting framework), because macOS
+        26+ launch constraints forbid spawning the bundled interpreter
+        directly. The local component context IS the office, so no UNO socket
+        is needed."""
+        self.ctx = uno.getComponentContext()
         smgr = self.ctx.ServiceManager
         self.desktop = smgr.createInstanceWithContext(
             "com.sun.star.frame.Desktop", self.ctx
@@ -445,15 +463,22 @@ def serve_conn(bridge, conn, lock):
             pass
 
 
+def _accept_loop(srv, bridge, lock):
+    while True:
+        conn, _ = srv.accept()
+        threading.Thread(target=serve_conn, args=(bridge, conn, lock), daemon=True).start()
+
+
 def main():
     bridge = Bridge()
     lock = threading.Lock()
     connect_str = os.environ.get("CALCITE_UNO_CONNECT")
-    if not connect_str:
-        print(json.dumps({"event": "fatal", "error": "CALCITE_UNO_CONNECT not set"}))
-        sys.exit(1)
+    in_tree = not connect_str  # running inside soffice (macOS) vs spawned directly
     try:
-        bridge.connect(connect_str)
+        if in_tree:
+            bridge.connect_local()
+        else:
+            bridge.connect(connect_str)
     except Exception as e:
         print(json.dumps({"event": "fatal", "error": str(e)}))
         sys.exit(1)
@@ -468,9 +493,12 @@ def main():
         srv.bind(("127.0.0.1", port))
         srv.listen(8)
         print(json.dumps({"event": "listening", "port": port}), flush=True)
-        while True:
-            conn, _ = srv.accept()
-            threading.Thread(target=serve_conn, args=(bridge, conn, lock), daemon=True).start()
+        if in_tree:
+            # The script executes on soffice's main thread; serve from a daemon
+            # thread and return so the office can finish its startup.
+            threading.Thread(target=_accept_loop, args=(srv, bridge, lock), daemon=True).start()
+        else:
+            _accept_loop(srv, bridge, lock)  # direct spawn: block forever
     else:
         serve_conn(bridge, sys.stdin, lock)  # stdio mode (single client)
 

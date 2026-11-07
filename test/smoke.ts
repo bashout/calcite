@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { EngineSupervisor } from "../src/engine/supervisor";
+import { locatePythonUnoIn, macOsFrameworkPythonCandidates, macOsUnoResourcesDir } from "../src/engine/locator";
 
 async function main() {
   // Isolate the shared-engine registry so tests never touch the user's engine.
@@ -13,6 +14,57 @@ async function main() {
   const ods = path.join(tmp, "sample.ods");
   execFileSync("soffice", ["--headless", "--convert-to", "ods", "--outdir", tmp, csv], { timeout: 60000 });
   if (!fs.existsSync(ods)) throw new Error("ods conversion failed");
+
+  // --- macOS bundle layout: framework interpreter + Contents/Resources uno.py ---
+  {
+    const fakeContents = path.join(tmp, "FakeLibreOffice.app", "Contents");
+    const resources = path.join(fakeContents, "Resources");
+    fs.mkdirSync(resources, { recursive: true });
+    fs.writeFileSync(path.join(resources, "uno.py"), "# fake uno module\n");
+    const mkPy = (ver: string) => {
+      const binDir = path.join(fakeContents, "Frameworks", "LibreOfficePython.framework", "Versions", ver, "bin");
+      fs.mkdirSync(binDir, { recursive: true });
+      const shim = path.join(binDir, `python${ver}`);
+      // Fake bundled interpreter: `-c 'import uno'` succeeds only when a dir
+      // on PYTHONPATH contains uno.py (mirrors the Contents/Resources layout).
+      fs.writeFileSync(
+        shim,
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "-c" ] && [ "$2" = "import uno" ]; then',
+          '  oldIFS="$IFS"; IFS=":"',
+          "  for d in $PYTHONPATH; do",
+          '    [ -n "$d" ] && [ -f "$d/uno.py" ] && exit 0',
+          "  done",
+          "  exit 1",
+          "fi",
+          "exit 0",
+          "",
+        ].join("\n")
+      );
+      fs.chmodSync(shim, 0o755);
+    };
+    mkPy("3.10");
+    mkPy("3.11");
+    fs.symlinkSync("3.11", path.join(fakeContents, "Frameworks", "LibreOfficePython.framework", "Versions", "Current"));
+
+    const cands = macOsFrameworkPythonCandidates(fakeContents);
+    // "Current" symlink first, then numeric versions newest-first.
+    if (cands.length !== 3) throw new Error(`expected 3 framework candidates, got ${cands.length}: ${cands}`);
+    if (!cands[0].includes(path.join("Current", "bin", "python3.11"))) throw new Error(`Current not first: ${cands[0]}`);
+    if (!cands[1].includes(path.join("3.11", "bin", "python3.11"))) throw new Error(`newest version not second: ${cands[1]}`);
+    if (!cands[2].includes(path.join("3.10", "bin", "python3.10"))) throw new Error(`oldest version not last: ${cands[2]}`);
+
+    const resourcesDir = macOsUnoResourcesDir(fakeContents);
+    if (!resourcesDir.endsWith(path.join("Contents", "Resources"))) throw new Error(`resources dir wrong: ${resourcesDir}`);
+    // Probing with Contents/Resources on PYTHONPATH must find the interpreter...
+    const found = locatePythonUnoIn(cands.map((bin) => ({ bin, env: { ...process.env, PYTHONPATH: resourcesDir } })));
+    if (!found || !found.includes("python3.11")) throw new Error(`framework python not found with Resources PYTHONPATH: ${found}`);
+    // ...and without it the import must fail (uno.py is not next to the binary).
+    const notFound = locatePythonUnoIn(cands.map((bin) => ({ bin })));
+    if (notFound) throw new Error(`probe succeeded without Contents/Resources on PYTHONPATH: ${notFound}`);
+    console.log("MACOS-LOCATOR PASS");
+  }
 
   const sup = new EngineSupervisor(tmp, path.resolve(__dirname, ".."));
   sup.on("state", (s, err) => console.log(`[state] ${s} ${err}`));

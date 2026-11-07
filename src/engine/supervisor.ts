@@ -1,7 +1,7 @@
 import { ChildProcess, spawn, spawnSync } from "child_process";
 import { randomBytes } from "crypto";
 import { EventEmitter } from "events";
-import { existsSync, readFileSync, readdirSync, rmSync, unlinkSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync } from "fs";
 import { createServer, Socket } from "net";
 import * as os from "os";
 import * as path from "path";
@@ -41,7 +41,7 @@ const HEARTBEAT_MS = 5000;
 const PING_TIMEOUT_MS = 5000;
 const ENGINE_POLL_MS = 4000;
 /** Bump when bridge.py's command set changes; stale engines are respawned. */
-const BRIDGE_VERSION = "8-window-a1";
+const BRIDGE_VERSION = "9-macos-intree-a1";
 
 /** Convert an absolute OS path to a file:// URL (Windows needs file:///C:/...). */
 function pathToFileUrl(p: string): string {
@@ -253,9 +253,14 @@ export class EngineSupervisor extends EventEmitter {
 
   private async doStart(): Promise<void> {
     this.sofficeBin = locateSoffice();
-    this.pythonBin = locatePythonUno();
     if (!this.sofficeBin) throw new Error("LibreOffice (soffice) not found on this system");
-    if (!this.pythonBin) throw new Error("python-uno not found (install python3-uno or LibreOffice's bundled python)");
+    this.pythonBin = locatePythonUno();
+    // On macOS the bridge runs inside the soffice process tree (macOS 26+
+    // SIGKILLs direct spawns of the bundled interpreter — launch constraints
+    // in the TDF signature), so no standalone python-uno is needed there.
+    if (process.platform !== "darwin" && !this.pythonBin) {
+      throw new Error("python-uno not found (install python3-uno or LibreOffice's bundled python)");
+    }
     this.reapOrphanEngines();
 
     // Try to attach to an existing shared engine first.
@@ -287,20 +292,31 @@ export class EngineSupervisor extends EventEmitter {
     this.profileDir = path.join(os.tmpdir(), `calcite-lo-${process.pid}-${Date.now()}`);
     const accept = `socket,host=127.0.0.1,port=${unoPort},token=${unoToken};urp;`;
 
-    this.sofficeProc = spawn(
-      this.sofficeBin,
-      ["--headless", "--norestore", "--nolockcheck", "--nodefault", `-env:UserInstallation=${pathToFileUrl(this.profileDir)}`, `--accept=${accept}`],
-      // detached => own process group (POSIX), so killEngine can take down
-      // soffice.bin too; windowsHide avoids a console flash on Windows.
-      { stdio: ["ignore", "ignore", "pipe"], detached: true, windowsHide: true }
-    );
+    if (process.platform === "darwin") {
+      // macOS: the bridge must live inside the soffice process tree, so
+      // soffice itself starts it as a user script (see spawnSofficeInTree).
+      this.sofficeProc = this.spawnSofficeInTree(accept);
+    } else {
+      this.sofficeProc = spawn(
+        this.sofficeBin,
+        ["--headless", "--norestore", "--nolockcheck", "--nodefault", `-env:UserInstallation=${pathToFileUrl(this.profileDir)}`, `--accept=${accept}`],
+        // detached => own process group (POSIX), so killEngine can take down
+        // soffice.bin too; windowsHide avoids a console flash on Windows.
+        { stdio: ["ignore", "ignore", "pipe"], detached: true, windowsHide: true }
+      );
+    }
     this.sofficeProc.on("exit", (code) => {
       if (this.state !== "stopped" && this.mode === "owner") this.scheduleRestart(`soffice exited (${code})`);
     });
 
     this.connectStr = `socket,host=127.0.0.1,port=${unoPort},token=${unoToken};urp;StarOffice.ComponentContext`;
-    await this.spawnBridgeAndWaitReady(this.connectStr);
-    await this.connectBridgeSocket(this.bridgePort, this.bridgeToken);
+    if (process.platform === "darwin") {
+      // No separate bridge process: wait for the in-tree bridge's socket.
+      await this.waitForBridgeSocket(this.bridgePort, this.bridgeToken, 60000);
+    } else {
+      await this.spawnBridgeAndWaitReady(this.connectStr);
+      await this.connectBridgeSocket(this.bridgePort, this.bridgeToken);
+    }
 
     this.mode = "owner";
     this.engineInfo = {
@@ -400,6 +416,72 @@ export class EngineSupervisor extends EventEmitter {
     }
     writeEngineInfo(pruned);
     return pruned;
+  }
+
+  /**
+   * macOS process model: the bundled LibreOfficePython.framework interpreter
+   * is only permitted to launch from inside the LibreOffice process tree
+   * (parent-launch constraints in the TDF signature; macOS 26+ SIGKILLs any
+   * other spawn). So instead of spawning python from Node, bridge.py is
+   * copied into the engine profile's user scripts dir and soffice runs it
+   * via the scripting framework. The bridge then uses the in-process UNO
+   * context (no CALCITE_UNO_CONNECT) and serves the same token-authenticated
+   * localhost socket, which waitForBridgeSocket attaches to.
+   */
+  private spawnSofficeInTree(accept: string): ChildProcess {
+    const bridgeSrc = bridgePath(this.pluginDir);
+    if (!existsSync(bridgeSrc)) {
+      throw new Error(`bridge script not found: ${bridgeSrc}`);
+    }
+    const scriptsDir = path.join(this.profileDir!, "user", "scripts", "python");
+    mkdirSync(scriptsDir, { recursive: true });
+    copyFileSync(bridgeSrc, path.join(scriptsDir, "calcite_bridge.py"));
+    const scriptUri = "vnd.sun.star.script:calcite_bridge.py$main?language=Python&location=user";
+    return spawn(
+      this.sofficeBin!,
+      [
+        "--headless",
+        "--norestore",
+        "--nolockcheck",
+        "--nodefault",
+        `-env:UserInstallation=${pathToFileUrl(this.profileDir!)}`,
+        `--accept=${accept}`,
+        scriptUri,
+      ],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        detached: true,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          // No CALCITE_UNO_CONNECT: the in-tree bridge uses the local context.
+          CALCITE_BRIDGE_LISTEN: String(this.bridgePort),
+          CALCITE_BRIDGE_TOKEN: this.bridgeToken,
+        },
+      }
+    );
+  }
+
+  /**
+   * Poll the bridge socket until the in-tree (macOS) bridge accepts and
+   * completes the token handshake. Fails fast if soffice died first.
+   */
+  private async waitForBridgeSocket(port: number, token: string, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let lastErr = "";
+    while (Date.now() < deadline) {
+      if (this.sofficeProc && this.sofficeProc.exitCode !== null) {
+        throw new Error(`soffice exited before the in-tree bridge came up (code=${this.sofficeProc.exitCode})`);
+      }
+      try {
+        await this.connectBridgeSocket(port, token, 5000);
+        return;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    throw new Error(`in-tree bridge socket not ready after ${timeoutMs}ms: ${lastErr}`);
   }
 
   private async spawnBridgeAndWaitReady(connect: string, timeoutMs = 30000): Promise<void> {

@@ -36,8 +36,15 @@ file on disk.
 - **LibreOffice installed** on your system (any recent version). The plugin
   locates `soffice` automatically; if it is missing, embeds show an inline
   message instead of a grid.
-- **python-uno** (`python3-uno` on Debian/Ubuntu, ships with LibreOffice's
-  bundled Python on other platforms) — used as the bridge into the engine.
+
+The python-uno bridge into the engine is resolved per platform — no manual
+step is needed:
+
+| Platform | soffice | python-uno bridge |
+| --- | --- | --- |
+| Linux | system LibreOffice (`soffice` on PATH or `/usr/lib/libreoffice`) | `python3-uno` package (Debian/Ubuntu) or LibreOffice's bundled `program/python` |
+| macOS | `LibreOffice.app` in `/Applications` (or Homebrew) | LibreOffice's bundled `LibreOfficePython.framework` interpreter — started **inside** the soffice process automatically (required on macOS 26+, where direct spawns of the bundled interpreter are killed by the OS) |
+| Windows | LibreOffice installed | bundled `program\python.exe` |
 
 No network access is required at runtime.
 
@@ -107,10 +114,14 @@ renderer (Chromium)            main process (Node)          engine
 - **Rendering:** a custom HTML grid in the note. The engine never renders; it
   is a pure calc backend.
 - **Bridge:** `python-uno` (ships with LibreOffice, no compilation). One shared
-  headless `soffice` + bridge process per user, listening on a
+  headless `soffice` + bridge per user, listening on a
   **token-authenticated localhost socket** (JSON-lines RPC). Later windows and
   vaults attach to the shared engine instead of spawning their own; documents
   are deduplicated by absolute path and refcounted across windows.
+  On Linux/Windows the bridge is a separate python process spawned by the
+  plugin; on **macOS** the bridge runs *inside* the soffice process (started
+  as a LibreOffice user script), because macOS 26+ kills direct spawns of the
+  bundled interpreter — the socket transport is identical either way.
 - **Process registry:** `~/.local/state/obsidian-calcite/engine.json`
   (mode 0600) tracks the engine pid, port, token, and a heartbeated window
   list; the last window out shuts the engine down and orphaned engines are
