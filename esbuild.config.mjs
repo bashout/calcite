@@ -27,6 +27,9 @@ const options = {
   ],
   format: "cjs",
   target: "es2018",
+  // bridge.py is embedded into main.js as a string and extracted at runtime,
+  // so releases are a single-file install (main.js + manifest.json + styles.css).
+  loader: { ".py": "text" },
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,

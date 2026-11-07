@@ -59,7 +59,10 @@ No network access is required at runtime.
 ### Manual install
 
 1. Download the latest release (`main.js`, `manifest.json`, `styles.css`) from
-   the [Releases](https://github.com/bashout/calcite/releases) page.
+   the [Releases](https://github.com/bashout/calcite/releases) page. That is
+   the complete plugin — the python bridge (`bridge.py`) is embedded inside
+   `main.js` at build time and extracted automatically at runtime, so no
+   extra files are needed.
 2. Copy them into `<your-vault>/.obsidian/plugins/calcite/`.
 3. Reload Obsidian (**Settings → Community plugins → Reload**) and enable
    **Calcite**.
@@ -113,13 +116,15 @@ renderer (Chromium)            main process (Node)          engine
 
 - **Rendering:** a custom HTML grid in the note. The engine never renders; it
   is a pure calc backend.
-- **Bridge:** `python-uno` (ships with LibreOffice, no compilation). One shared
-  headless `soffice` + bridge per user, listening on a
-  **token-authenticated localhost socket** (JSON-lines RPC). Later windows and
-  vaults attach to the shared engine instead of spawning their own; documents
-  are deduplicated by absolute path and refcounted across windows.
-  On Linux/Windows the bridge is a separate python process spawned by the
-  plugin; on **macOS** the bridge runs *inside* the soffice process (started
+- **Bridge:** `python-uno` (ships with LibreOffice, no compilation). The bridge
+  script (`bridge/bridge.py`) is **embedded into `main.js` at build time** and
+  extracted to the per-user state dir at runtime, so the release is a
+  single-file install. One shared headless `soffice` + bridge per user,
+  listening on a **token-authenticated localhost socket** (JSON-lines RPC).
+  Later windows and vaults attach to the shared engine instead of spawning
+  their own; documents are deduplicated by absolute path and refcounted across
+  windows. On Linux/Windows the bridge is a separate python process spawned by
+  the plugin; on **macOS** the bridge runs *inside* the soffice process (started
   as a LibreOffice user script), because macOS 26+ kills direct spawns of the
   bundled interpreter — the socket transport is identical either way.
 - **Process registry:** `~/.local/state/obsidian-calcite/engine.json`
@@ -148,6 +153,10 @@ npm run dev      # watch build (inline sourcemap)
 npm run build    # typecheck (tsc --noEmit) + production bundle to main.js
 ```
 
+`bridge/bridge.py` is bundled into `main.js` as a string (esbuild `".py":
+"text"` loader) — never load it from disk in plugin code. The smoke bundle
+needs the same loader flag (see below).
+
 ### Smoke test
 
 The smoke test (`test/smoke.ts`) exercises the real engine end-to-end: it
@@ -157,7 +166,7 @@ edit → save → reload persistence round-trip, and structural edits. It needs
 `soffice` and `python3-uno` on the machine:
 
 ```sh
-npx esbuild test/smoke.ts --bundle --platform=node --format=cjs --outfile=test/smoke.cjs
+npx esbuild test/smoke.ts --bundle --platform=node --format=cjs --loader:.py=text --outfile=test/smoke.cjs
 node test/smoke.cjs
 ```
 

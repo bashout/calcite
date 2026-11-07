@@ -4,6 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import { EngineSupervisor } from "../src/engine/supervisor";
 import { locatePythonUnoIn, macOsFrameworkPythonCandidates, macOsUnoResourcesDir } from "../src/engine/locator";
+import { stateDir } from "../src/engine/registry";
+import embeddedBridgeSource from "../bridge/bridge.py";
 
 async function main() {
   // Isolate the shared-engine registry so tests never touch the user's engine.
@@ -66,7 +68,7 @@ async function main() {
     console.log("MACOS-LOCATOR PASS");
   }
 
-  const sup = new EngineSupervisor(tmp, path.resolve(__dirname, ".."));
+  const sup = new EngineSupervisor(tmp);
   sup.on("state", (s, err) => console.log(`[state] ${s} ${err}`));
 
   const version = await sup.ping().catch(() => null);
@@ -75,6 +77,13 @@ async function main() {
   const loaded = await sup.loadFile(ods);
   console.log("loaded:", JSON.stringify(loaded));
   if (!loaded.sheets.includes("sample")) throw new Error("sheet missing");
+
+  // bridge.py is embedded in the bundle and extracted to the state dir at
+  // runtime — a release install needs no separate bridge file.
+  const extracted = path.join(stateDir(), "bridge.py");
+  if (!fs.existsSync(extracted)) throw new Error(`embedded bridge not extracted to ${extracted}`);
+  if (fs.readFileSync(extracted, "utf8") !== embeddedBridgeSource) throw new Error("extracted bridge differs from embedded source");
+  console.log("BRIDGE-EMBED PASS");
 
   const grid = await sup.dumpSheet(loaded.docId, loaded.sheets[0]);
   console.log("range:", JSON.stringify(grid.range));
@@ -194,12 +203,12 @@ async function main() {
   }
 
   // --- multi-window: shared engine, attach mode, refcounted docs ---
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "calcite-state-"));
-  process.env.CALCITE_STATE_DIR = stateDir;
-  const supA = new EngineSupervisor(tmp, path.resolve(__dirname, ".."));
+  const multiStateDir = fs.mkdtempSync(path.join(os.tmpdir(), "calcite-state-"));
+  process.env.CALCITE_STATE_DIR = multiStateDir;
+  const supA = new EngineSupervisor(tmp);
   const a = await supA.loadFile(ods);
   if (supA.mode !== "owner") throw new Error(`A should own engine, got ${supA.mode}`);
-  const supB = new EngineSupervisor(tmp, path.resolve(__dirname, ".."));
+  const supB = new EngineSupervisor(tmp);
   const b = await supB.loadFile(ods);
   if (supB.mode !== "attached") throw new Error(`B should attach, got ${supB.mode}`);
   if (b.docId !== a.docId) throw new Error("same file should share docId across windows");
@@ -209,13 +218,13 @@ async function main() {
   await supA.stop(); // engine must survive: B still attached
   await supB.ping();
   await supB.stop(); // last window: engine shuts down, registry removed
-  if (fs.existsSync(path.join(stateDir, "engine.json"))) throw new Error("registry not removed after last window");
+  if (fs.existsSync(path.join(multiStateDir, "engine.json"))) throw new Error("registry not removed after last window");
   console.log("MULTI-WINDOW PASS");
 
   // --- engine crash recovery: SIGKILL the engine, supervisor must respawn ---
-  const supC = new EngineSupervisor(tmp, path.resolve(__dirname, ".."));
+  const supC = new EngineSupervisor(tmp);
   await supC.loadFile(ods);
-  const info = JSON.parse(fs.readFileSync(path.join(stateDir, "engine.json"), "utf8"));
+  const info = JSON.parse(fs.readFileSync(path.join(multiStateDir, "engine.json"), "utf8"));
   process.kill(info.pid, "SIGKILL"); // simulate external kill of soffice
   const deadline = Date.now() + 30000;
   while (supC.state !== "ready" && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500));

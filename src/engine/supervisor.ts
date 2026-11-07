@@ -1,12 +1,13 @@
 import { ChildProcess, spawn, spawnSync } from "child_process";
 import { randomBytes } from "crypto";
 import { EventEmitter } from "events";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { createServer, Socket } from "net";
 import * as os from "os";
 import * as path from "path";
+import bridgePySource from "../../bridge/bridge.py";
 import { locatePythonUno, locateSoffice } from "./locator";
-import { EngineInfo, engineFile, pidAlive, pruneWindows, readEngineInfo, removeEngineInfo, writeEngineInfo } from "./registry";
+import { EngineInfo, engineFile, pidAlive, pruneWindows, readEngineInfo, removeEngineInfo, stateDir, writeEngineInfo } from "./registry";
 
 export interface CellData {
   v: string | number | boolean | null;
@@ -29,10 +30,27 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
-// Inside Obsidian, __dirname points into electron.asar, so the plugin dir is
-// passed in explicitly (plugin.manifest.dir). CALCITE_BRIDGE overrides for tests.
-function bridgePath(pluginDir: string): string {
-  return process.env.CALCITE_BRIDGE ?? path.join(pluginDir, "bridge", "bridge.py");
+// bridge.py is embedded into main.js at build time (esbuild ".py": "text"
+// loader) and extracted here to the per-user state dir, so a release is a
+// single-file install — GitHub release assets cannot carry path separators,
+// so shipping bridge/bridge.py as a separate asset is not an option.
+// CALCITE_BRIDGE overrides for tests.
+function bridgePath(): string {
+  if (process.env.CALCITE_BRIDGE) return process.env.CALCITE_BRIDGE;
+  const dir = stateDir();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const f = path.join(dir, "bridge.py");
+  try {
+    // Rewrite when the embedded source changed, so the extracted script
+    // always matches the shipped main.js.
+    if (readFileSync(f, "utf8") !== bridgePySource) throw new Error("stale");
+  } catch {
+    // Atomic write: a concurrently starting engine never sees a partial file.
+    const tmp = `${f}.tmp-${process.pid}`;
+    writeFileSync(tmp, bridgePySource, { mode: 0o600 });
+    renameSync(tmp, f);
+  }
+  return f;
 }
 
 const REQUEST_TIMEOUT_MS = 30000;
@@ -186,7 +204,7 @@ export class EngineSupervisor extends EventEmitter {
   /** Unique per plugin instance (window), not just per process. */
   private windowId = `${process.pid}-${randomBytes(4).toString("hex")}`;
 
-  constructor(private vaultRoot: string, private pluginDir: string) {
+  constructor(private vaultRoot: string) {
     super();
   }
 
@@ -429,7 +447,7 @@ export class EngineSupervisor extends EventEmitter {
    * localhost socket, which waitForBridgeSocket attaches to.
    */
   private spawnSofficeInTree(accept: string): ChildProcess {
-    const bridgeSrc = bridgePath(this.pluginDir);
+    const bridgeSrc = bridgePath();
     if (!existsSync(bridgeSrc)) {
       throw new Error(`bridge script not found: ${bridgeSrc}`);
     }
@@ -485,7 +503,7 @@ export class EngineSupervisor extends EventEmitter {
   }
 
   private async spawnBridgeAndWaitReady(connect: string, timeoutMs = 30000): Promise<void> {
-    const bridgePath_ = bridgePath(this.pluginDir);
+    const bridgePath_ = bridgePath();
     if (!existsSync(bridgePath_)) {
       throw new Error(`bridge script not found: ${bridgePath_}`);
     }

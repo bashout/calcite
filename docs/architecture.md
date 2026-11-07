@@ -79,6 +79,13 @@ renderer (Chromium)                main process (Node)              engine
     at `Contents/Frameworks/LibreOfficePython.framework/Versions/<ver>/bin/python3.x`
     (`Contents/MacOS/python` is gone) and `uno.py` in `Contents/Resources`, so
     the framework interpreter is probed with `PYTHONPATH=<bundle>/Contents/Resources`.
+12. Packaging: `bridge.py` is embedded into `main.js` at build time (esbuild
+    `".py": "text"` loader) and extracted at runtime to `<state dir>/bridge.py`
+    (atomic rewrite when the embedded source changes). Releases therefore ship
+    only `main.js`, `manifest.json`, `styles.css` — GitHub release assets cannot
+    contain path separators, so a separate `bridge/bridge.py` asset would land
+    in the wrong place and break installs; embedding also guarantees the
+    extracted script always matches the shipped `main.js`.
 
 ## Render pipeline notes
 

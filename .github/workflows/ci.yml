@@ -30,7 +30,7 @@ jobs:
           sudo apt-get install -y libreoffice-calc python3-uno
 
       - name: Bundle smoke test
-        run: npx esbuild test/smoke.ts --bundle --platform=node --format=cjs --outfile=test/smoke.cjs
+        run: npx esbuild test/smoke.ts --bundle --platform=node --format=cjs --loader:.py=text --outfile=test/smoke.cjs
 
       - name: Run smoke test
         run: node test/smoke.cjs

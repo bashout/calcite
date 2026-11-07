@@ -24,7 +24,7 @@ export default class CalcitePlugin extends Plugin {
   async onload() {
     const vaultRoot = (this.app.vault.adapter as any).getBasePath();
     // manifest.dir is vault-relative; anchor it to the vault root.
-    this.supervisor = new EngineSupervisor(vaultRoot, path.resolve(vaultRoot, this.manifest.dir ?? ""));
+    this.supervisor = new EngineSupervisor(vaultRoot);
     let wasReady = false;
     this.supervisor.on("state", (s, err) => {
       console.log(`[calcite] engine ${s} ${err}`);
