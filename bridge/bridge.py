@@ -12,9 +12,14 @@ Connection string is passed via CALCITE_UNO_CONNECT, e.g.
 When CALCITE_UNO_CONNECT is absent the script runs IN-TREE: inside the soffice
 process itself (macOS starts it as a user script, because macOS 26+ launch
 constraints SIGKILL direct spawns of the bundled interpreter). It then uses
-the in-process component context instead of a UNO socket. In both modes the
-RPC transport toward the supervisor is the token-authenticated localhost
-socket (CALCITE_BRIDGE_LISTEN) or, for a single direct-spawn client, stdio.
+the in-process component context instead of a UNO socket. In-tree, soffice
+runs the command-line script synchronously on its main thread and exits 0
+when it returns (even with --accept), so the accept loop blocks forever on
+that thread; clients are served inline on the main thread via select, because
+UNO calls from other threads deadlock while the main thread is blocked in a
+script. In both modes the RPC transport toward the supervisor is the
+token-authenticated localhost socket (CALCITE_BRIDGE_LISTEN) or, for a single
+direct-spawn client, stdio.
 
 Commands:
   ping                                  -> {"version": str}
@@ -38,6 +43,7 @@ Commands:
 import hmac
 import json
 import os
+import select
 import socket
 import sys
 import threading
@@ -469,6 +475,67 @@ def _accept_loop(srv, bridge, lock):
         threading.Thread(target=serve_conn, args=(bridge, conn, lock), daemon=True).start()
 
 
+def _serve_in_tree(srv, bridge):
+    """In-tree mode (macOS): serve all clients on the script's main thread.
+
+    soffice runs a command-line script URI synchronously and quits (exit 0)
+    when it returns — even with --accept — so this loop must never return.
+    UNO calls from worker threads deadlock while the main thread is blocked in
+    a script, so each request is handled inline here. Clients are multiplexed
+    with select; the supervisor serializes requests per connection, so at most
+    one line is ever buffered per client beyond what readline consumed.
+    """
+    clients = {}  # socket -> file object
+    while True:
+        readable, _, _ = select.select([srv, *clients], [], [])
+        for s in readable:
+            if s is srv:
+                conn, _ = srv.accept()
+                f = conn.makefile("rw", encoding="utf-8", newline="\n")
+                token_line = f.readline().strip()
+                expected = os.environ.get("CALCITE_BRIDGE_TOKEN", "")
+                if not token_line or not hmac.compare_digest(token_line, expected):
+                    try:
+                        f.write(json.dumps({"event": "fatal", "error": "bad token"}) + "\n")
+                        f.flush()
+                    except OSError:
+                        pass
+                    conn.close()
+                    continue
+                f.write(json.dumps({"event": "ok"}) + "\n")
+                f.flush()
+                clients[conn] = f
+                continue
+            f = clients[s]
+            line = f.readline()
+            if not line:  # client disconnected
+                del clients[s]
+                try:
+                    s.close()
+                except OSError:
+                    pass
+                continue
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+                handler = getattr(bridge, HANDLERS[req["cmd"]])
+                result = handler(req.get("params") or {})
+                resp = {"id": req["id"], "ok": True, "result": result}
+            except Exception as e:
+                resp = {"id": req.get("id"), "ok": False, "error": f"{e}\n{traceback.format_exc()}"}
+            try:
+                f.write(json.dumps(resp) + "\n")
+                f.flush()
+            except OSError:  # client went away mid-request
+                del clients[s]
+                try:
+                    s.close()
+                except OSError:
+                    pass
+
+
 def main():
     bridge = Bridge()
     lock = threading.Lock()
@@ -493,13 +560,13 @@ def main():
         srv.bind(("127.0.0.1", port))
         srv.listen(8)
         print(json.dumps({"event": "listening", "port": port}), flush=True)
-        # Block forever in the foreground in BOTH shared modes. In-tree
-        # (macOS), a command-line script URI runs synchronously and a headless
-        # soffice quits with exit 0 as soon as the script returns — even with
-        # --accept — which would kill a daemon-thread accept loop with the
-        # process. Keeping the accept loop on the script's own thread keeps
-        # the office (and the bridge) resident.
-        _accept_loop(srv, bridge, lock)
+        if in_tree:
+            # Never return (headless soffice exits 0 when the script does) and
+            # serve on the main thread (cross-thread UNO calls deadlock while
+            # the main thread is blocked in the script).
+            _serve_in_tree(srv, bridge)
+        else:
+            _accept_loop(srv, bridge, lock)  # direct spawn: block forever
     else:
         serve_conn(bridge, sys.stdin, lock)  # stdio mode (single client)
 

@@ -83,6 +83,10 @@ renderer (Chromium)                main process (Node)              engine
     soffice exits 0 as soon as it returns — even with `--accept` — so the in-tree
     bridge's accept loop must block in the foreground for the process lifetime;
     the supervisor also keeps a tail of soffice's stderr to diagnose such exits.
+    Also verified: UNO calls from worker threads deadlock while the office main
+    thread is blocked inside the script (socket handshake works, first RPC hangs),
+    so in-tree the bridge serves all clients inline on the main thread via a
+    select loop (`_serve_in_tree`) instead of per-connection threads.
 12. Packaging: `bridge.py` is embedded into `main.js` at build time (esbuild
     `".py": "text"` loader) and extracted at runtime to `<state dir>/bridge.py`
     (atomic rewrite when the embedded source changes). Releases therefore ship
