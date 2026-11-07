@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install LibreOffice and python-uno (smoke test deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-calc python3-uno
+
+      - name: Bundle smoke test
+        run: npx esbuild test/smoke.ts --bundle --platform=node --format=cjs --outfile=test/smoke.cjs
+
+      - name: Run smoke test
+        run: node test/smoke.cjs

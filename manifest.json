@@ -1,0 +1,9 @@
+{
+  "id": "calcite",
+  "name": "Calcite",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Render and edit Calc spreadsheets (.ods/.xlsx) inside Obsidian via a headless LibreOffice engine.",
+  "author": "bashout",
+  "isDesktopOnly": true
+}

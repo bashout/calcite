@@ -1,0 +1,207 @@
+.calcite-embed {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  overflow: auto;
+  max-height: 70vh;
+  background: var(--background-primary);
+}
+
+.calcite-table {
+  border-collapse: collapse;
+  font-size: var(--table-text-size, 0.9em);
+  font-family: var(--font-interface);
+}
+
+.calcite-table th,
+.calcite-table td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 2px 8px;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.calcite-table thead th,
+.calcite-table tbody th {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-weight: var(--font-semibold);
+  position: sticky;
+  z-index: 1;
+}
+
+.calcite-table thead th {
+  top: 0;
+}
+
+.calcite-table tbody th {
+  left: 0;
+}
+
+.calcite-table .calcite-corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
+.calcite-table td.calcite-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.calcite-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.calcite-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+}
+
+.calcite-tab,
+.calcite-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.calcite-tab:hover,
+.calcite-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.calcite-tab-add {
+  font-weight: var(--font-bold);
+  padding: 2px 10px;
+}
+
+.calcite-tab-active {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.calcite-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.calcite-cell {
+  cursor: cell;
+}
+
+/* Lock the grid while the engine is starting/respawning. */
+.calcite-busy .calcite-cell,
+.calcite-busy .calcite-table th,
+.calcite-busy .calcite-tab,
+.calcite-busy .calcite-btn {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.calcite-busy .calcite-formula-input {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.calcite-editor {
+  width: 100%;
+  min-width: 6em;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: inherit;
+  padding: 0 4px;
+}
+
+.calcite-dirty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-style: italic;
+  padding: 0 6px;
+}
+
+.calcite-error {
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+  padding: 0 6px;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calcite-formula-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.calcite-ref {
+  min-width: 3.5em;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.calcite-formula-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  padding: 2px 4px;
+}
+
+.calcite-formula-input:focus {
+  outline: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+/* Must out-specify Obsidian's .markdown-rendered tbody tr>td:nth-child(2n+2)
+   alt-column background (specificity 0-2-3); even columns like G were
+   overridden by it. 0-3-2 wins. */
+.calcite-embed .calcite-table tbody td.calcite-cell-error {
+  color: var(--text-error);
+  background: color-mix(in srgb, var(--text-error) 8%, transparent);
+}
+
+.calcite-cell.calcite-selected {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.calcite-banner {
+  padding: 8px 12px;
+  color: var(--text-muted);
+}
+
+.calcite-status-error .calcite-banner {
+  color: var(--text-error);
+}
+
+.calcite-empty {
+  padding: 8px 12px;
+  color: var(--text-muted);
+}
