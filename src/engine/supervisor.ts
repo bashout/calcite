@@ -186,6 +186,8 @@ export class EngineSupervisor extends EventEmitter {
   private sofficeBin: string | null = null;
   private pythonBin: string | null = null;
   private sofficeProc: ChildProcess | null = null;
+  /** Tail of soffice's piped stderr, for diagnosing why it exited. */
+  private sofficeErrBuf = "";
   private bridgeProc: ChildProcess | null = null;
   private sock: Socket | null = null;
   private nextId = 1;
@@ -323,8 +325,18 @@ export class EngineSupervisor extends EventEmitter {
         { stdio: ["ignore", "ignore", "pipe"], detached: true, windowsHide: true }
       );
     }
+    // soffice's stderr is piped but otherwise unread — keep a rolling tail so
+    // an unexpected exit (e.g. code 0 before the in-tree bridge comes up) can
+    // be diagnosed instead of showing only the exit code.
+    this.sofficeErrBuf = "";
+    this.sofficeProc.stderr?.on("data", (c: Buffer) => {
+      this.sofficeErrBuf += c.toString("utf8");
+      if (this.sofficeErrBuf.length > 4000) this.sofficeErrBuf = this.sofficeErrBuf.slice(-4000);
+    });
     this.sofficeProc.on("exit", (code) => {
-      if (this.state !== "stopped" && this.mode === "owner") this.scheduleRestart(`soffice exited (${code})`);
+      if (this.state !== "stopped" && this.mode === "owner") {
+        this.scheduleRestart(`soffice exited (${code})${this.sofficeStderrTail() ? ` stderr: ${this.sofficeStderrTail()}` : ""}`);
+      }
     });
 
     this.connectStr = `socket,host=127.0.0.1,port=${unoPort},token=${unoToken};urp;StarOffice.ComponentContext`;
@@ -484,12 +496,18 @@ export class EngineSupervisor extends EventEmitter {
    * Poll the bridge socket until the in-tree (macOS) bridge accepts and
    * completes the token handshake. Fails fast if soffice died first.
    */
+  /** Last few stderr lines of the soffice process ("" when silent). */
+  private sofficeStderrTail(): string {
+    return this.sofficeErrBuf.trim().split("\n").filter(Boolean).slice(-3).join(" | ");
+  }
+
   private async waitForBridgeSocket(port: number, token: string, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let lastErr = "";
     while (Date.now() < deadline) {
       if (this.sofficeProc && this.sofficeProc.exitCode !== null) {
-        throw new Error(`soffice exited before the in-tree bridge came up (code=${this.sofficeProc.exitCode})`);
+        const tail = this.sofficeStderrTail();
+        throw new Error(`soffice exited before the in-tree bridge came up (code=${this.sofficeProc.exitCode})${tail ? ` stderr: ${tail}` : ""}`);
       }
       try {
         await this.connectBridgeSocket(port, token, 5000);

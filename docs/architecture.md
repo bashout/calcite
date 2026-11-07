@@ -79,6 +79,10 @@ renderer (Chromium)                main process (Node)              engine
     at `Contents/Frameworks/LibreOfficePython.framework/Versions/<ver>/bin/python3.x`
     (`Contents/MacOS/python` is gone) and `uno.py` in `Contents/Resources`, so
     the framework interpreter is probed with `PYTHONPATH=<bundle>/Contents/Resources`.
+    Verified on macOS: a command-line script URI runs synchronously and headless
+    soffice exits 0 as soon as it returns — even with `--accept` — so the in-tree
+    bridge's accept loop must block in the foreground for the process lifetime;
+    the supervisor also keeps a tail of soffice's stderr to diagnose such exits.
 12. Packaging: `bridge.py` is embedded into `main.js` at build time (esbuild
     `".py": "text"` loader) and extracted at runtime to `<state dir>/bridge.py`
     (atomic rewrite when the embedded source changes). Releases therefore ship

@@ -493,12 +493,13 @@ def main():
         srv.bind(("127.0.0.1", port))
         srv.listen(8)
         print(json.dumps({"event": "listening", "port": port}), flush=True)
-        if in_tree:
-            # The script executes on soffice's main thread; serve from a daemon
-            # thread and return so the office can finish its startup.
-            threading.Thread(target=_accept_loop, args=(srv, bridge, lock), daemon=True).start()
-        else:
-            _accept_loop(srv, bridge, lock)  # direct spawn: block forever
+        # Block forever in the foreground in BOTH shared modes. In-tree
+        # (macOS), a command-line script URI runs synchronously and a headless
+        # soffice quits with exit 0 as soon as the script returns — even with
+        # --accept — which would kill a daemon-thread accept loop with the
+        # process. Keeping the accept loop on the script's own thread keeps
+        # the office (and the bridge) resident.
+        _accept_loop(srv, bridge, lock)
     else:
         serve_conn(bridge, sys.stdin, lock)  # stdio mode (single client)
 
