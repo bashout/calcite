@@ -1,5 +1,7 @@
 # Calcite
 
+<img src="branding/projectLogo.png" alt="Calcite logo" width="640">
+
 An [Obsidian](https://obsidian.md) plugin that renders **and edits** Calc
 spreadsheets (`.ods`, `.xlsx`) directly inside your notes, backed by the real
 LibreOffice Calc engine — not a re-implementation. Formulas recalculate, cells
